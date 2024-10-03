@@ -11,7 +11,7 @@ def create_tts_file(text, filename):
     tts = gTTS(text=text, lang='en')
     tts.save(filename)
 
-# Create the alarm audio file if it doesn't exist
+# Create the alarm audio file
 create_tts_file("Please return the keys", "return_keys.mp3")
 
 # Define the color range for the key in HSV
@@ -32,7 +32,7 @@ def detect_key(frame):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     return contours
 
-def draw_boxes(frame, boxes, elapsed_time):
+def draw_boxes(frame, boxes, countdown):
     for (x_start, y_start, box_width, box_height, color, box_text, label_text) in boxes:
         cv2.rectangle(frame, (x_start, y_start), (x_start + box_width, y_start + box_height), color, 2)
         
@@ -48,12 +48,12 @@ def draw_boxes(frame, boxes, elapsed_time):
         label_y = y_start - 10
         cv2.putText(frame, label_text, (label_x, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
-        # Display the elapsed time in the center of the box
-        time_text = f"{int(elapsed_time)}s"
-        time_size = cv2.getTextSize(time_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-        time_x = x_start + (box_width - time_size[0]) // 2
-        time_y = y_start + (box_height + time_size[1]) // 2 + 15  # Adjust position slightly below the center
-        cv2.putText(frame, time_text, (time_x, time_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        # Display the countdown in the center of the box
+        countdown_text = f"{countdown}s"
+        countdown_size = cv2.getTextSize(countdown_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+        countdown_x = x_start + (box_width - countdown_size[0]) // 2
+        countdown_y = y_start + (box_height + countdown_size[1]) // 2 + 15  # Adjust position slightly below the center
+        cv2.putText(frame, countdown_text, (countdown_x, countdown_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
 def is_key_in_box(contours, boxes):
     detected_keys = [False] * len(boxes)
@@ -71,21 +71,30 @@ def is_key_in_box(contours, boxes):
 
 def alarm_if_no_keys(boxes):
     pygame.mixer.init()  # Initialize the mixer
-    pygame.mixer.music.load('return_keys.mp3')  # Load the new TTS sound
+    pygame.mixer.music.load('return_keys.mp3')  # Load the TTS sound
     last_alarm_time = time.time()
+    alarm_triggered = False  # Track if the alarm is currently triggered
     
     while True:
         time.sleep(1)
         if all("Not Available" in box[5] for box in boxes):  # Check if all boxes do not have keys
             current_time = time.time()
-            if current_time - last_alarm_time >= 60:  # Check if 60 seconds have passed
+            if not alarm_triggered and current_time - last_alarm_time >= 5:  # Trigger after 5 seconds
                 pygame.mixer.music.play()  # Play alarm sound
                 last_alarm_time = current_time  # Update the last alarm time
+                alarm_triggered = True
+            elif alarm_triggered and current_time - last_alarm_time >= 5:  # Every 5 seconds after the first alarm
+                pygame.mixer.music.play()  # Play alarm sound
+                last_alarm_time = current_time  # Update the last alarm time
+        else:
+            alarm_triggered = False  # Reset the alarm trigger if keys are detected
 
 try:
-    alarm_thread = threading.Thread(target=alarm_if_no_keys, args=([],))
+    boxes = []
+    alarm_thread = threading.Thread(target=alarm_if_no_keys, args=(boxes,))
     alarm_thread.start()
 
+    countdown = 60  # Initialize countdown
     start_time = time.time()  # Record the start time
     while True:
         elapsed_time = time.time() - start_time  # Calculate elapsed time
@@ -113,8 +122,21 @@ try:
             boxes[i] = (*boxes[i][:4], (0, 255, 0) if detected else (0, 0, 255), 
                          "Keys Available" if detected else "Keys Not Available", boxes[i][6])
 
+        # Update the alarm thread with current boxes
         alarm_thread.args = (boxes,)
-        draw_boxes(frame, boxes, elapsed_time)
+        
+        draw_boxes(frame, boxes, countdown)
+
+        # Decrease countdown every second
+        if countdown > 0:
+            countdown -= 1
+        
+        if countdown < 0:  # Reset countdown if it reaches below zero
+            countdown = 60
+
+        # Stop the alarm if all keys are detected
+        if all(detected_keys):
+            pygame.mixer.music.stop()  # Stop alarm if all keys are detected
 
         cv2.imshow("Original Frame", frame)
 
